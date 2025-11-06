@@ -1,11 +1,16 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:myapp/diagnosis_data.dart';
 import 'package:myapp/question_view.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'dart:io';
 import 'firebase_options.dart';
 
 void main() async {
@@ -16,6 +21,11 @@ void main() async {
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
+
+  static FirebaseAnalytics analytics = FirebaseAnalytics.instance;
+  static FirebaseAnalyticsObserver observer = FirebaseAnalyticsObserver(
+    analytics: analytics,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -29,6 +39,7 @@ class MyApp extends StatelessWidget {
           Theme.of(context).textTheme,
         ),
       ),
+      navigatorObservers: <NavigatorObserver>[observer],
       home: const DiagnosisListScreen(),
     );
   }
@@ -47,7 +58,48 @@ class _DiagnosisListScreenState extends State<DiagnosisListScreen> {
   @override
   void initState() {
     super.initState();
+    _checkVersion();
     _diagnosisData = _loadDiagnosisData();
+  }
+
+  Future<void> _checkVersion() async {
+    final packageInfo = await PackageInfo.fromPlatform();
+    final currentVersion = packageInfo.version;
+
+    final snapshot = await FirebaseFirestore.instance
+        .collection('config')
+        .doc('GUKgKQUkT5EpGSV6teiw') // iOSの場合は'ios'などプラットフォームに合わせて変更してください
+        .get();
+
+    if (snapshot.exists) {
+      final data = snapshot.data();
+      if (data != null && data.containsKey('iOS_ver')) {
+        final latestVersion = data['iOS_ver'] as String;
+
+        if (_compareVersions(latestVersion, currentVersion) > 0) {
+          // contextが利用可能な状態か確認
+          if (mounted) {
+            _showUpdateDialog(context);
+          }
+        }
+      }
+    }
+  }
+
+  int _compareVersions(String v1, String v2) {
+    final parts1 = v1.split('.').map(int.parse).toList();
+    final parts2 = v2.split('.').map(int.parse).toList();
+    final maxLength = parts1.length > parts2.length
+        ? parts1.length
+        : parts2.length;
+
+    for (int i = 0; i < maxLength; i++) {
+      final p1 = i < parts1.length ? parts1[i] : 0;
+      final p2 = i < parts2.length ? parts2[i] : 0;
+      if (p1 > p2) return 1;
+      if (p1 < p2) return -1;
+    }
+    return 0;
   }
 
   Future<List<Diagnosis>> _loadDiagnosisData() async {
@@ -139,6 +191,46 @@ class _DiagnosisListScreenState extends State<DiagnosisListScreen> {
           },
         ),
       ),
+    );
+  }
+
+  void _showUpdateDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('アップデートが必要です'),
+          content: const Text('新しいバージョンのアプリが利用可能です。アップデートしてください。'),
+          actions: [
+            TextButton(
+              child: const Text('アップデート'),
+              onPressed: () {
+                // ストアのURLを定義
+                // TODO: 必ずご自身のアプリのURLに書き換えてください
+                const String appStoreUrl =
+                    'https://itunes.apple.com/jp/app/id6754920676?mt=8';
+                const String playStoreUrl =
+                    'https://play.google.com/store/apps/details?id=<あなたのパッケージ名>';
+
+                // OSに応じて開くURLを決定
+                final String url = Platform.isIOS ? appStoreUrl : playStoreUrl;
+
+                try {
+                  launchUrl(
+                    Uri.parse(url),
+                    mode: LaunchMode.externalApplication, // ストアアプリを直接開く
+                  );
+                } catch (e) {
+                  // エラー処理
+                  debugPrint('ストアを開けませんでした: $e');
+                }
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 }
